@@ -52,6 +52,16 @@ const shouldReload = () => vscode.workspace.getConfiguration('reason_language_se
  * [1]: https://github.com/Microsoft/vscode/issues/11514#issuecomment-244707076
  */
 function configureLanguage() {
+    const usesOdocForReason = vscode.workspace
+      .getConfiguration("reason_language_server")
+      .get("use_odoc_for_reason");
+  
+    let appendText = "";
+  
+    if (!usesOdocForReason) {
+      appendText = "*";
+    }
+
   return vscode.languages.setLanguageConfiguration('reason', {
     onEnterRules: [
       {
@@ -59,19 +69,19 @@ function configureLanguage() {
         // e.g. /** | */ or /*! | */
         beforeText: /^\s*\/\*(\*|\!)(?!\/)([^\*]|\*(?!\/))*$/,
         afterText: /^\s*\*\/$/,
-        action: { indentAction: vscode.IndentAction.IndentOutdent, appendText: ' * ' },
+        action: { indentAction: vscode.IndentAction.IndentOutdent, appendText: ` ${appendText} ` },
       },
       {
         // Begins a multi-line comment (standard or parent doc)
         // e.g. /** ...| or /*! ...|
         beforeText: /^\s*\/\*(\*|\!)(?!\/)([^\*]|\*(?!\/))*$/,
-        action: { indentAction: vscode.IndentAction.None, appendText: ' * ' },
+        action: { indentAction: vscode.IndentAction.None, appendText: ` ${appendText} ` },
       },
       {
         // Continues a multi-line comment
         // e.g.  * ...|
         beforeText: /^(\ \ )*\ \*(\ ([^\*]|\*(?!\/))*)?$/,
-        action: { indentAction: vscode.IndentAction.None, appendText: '* ' },
+        action: { indentAction: vscode.IndentAction.None, appendText: `${appendText} ` },
       },
       {
         // Dedents after closing a multi-line comment
