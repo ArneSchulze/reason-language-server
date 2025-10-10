@@ -3,6 +3,7 @@ open Belt;
 open R;
 open TopTypes;
 open Infix;
+open Compiler_libs_406;
 
 let extend = (obj, items) => Json.obj(obj) |?>> current => Json.Object(current @ items);
 
@@ -686,17 +687,16 @@ let handlers: list((string, (state, Json.t) => result((state, Json.t), string)))
         | `Interface(int) => Pprintast.signature(Format.str_formatter, int)
       };
     } else {
-      let module Convert = Migrate_parsetree.Convert(Migrate_parsetree.OCaml_408, Migrate_parsetree.OCaml_404);
       switch (parsetree) {
       | `Implementation(str) =>
-        Reason_toolchain.RE.print_implementation_with_comments(
+        Reason.Reason_toolchain.RE.print_implementation_with_comments(
           Format.str_formatter,
-          (Convert.copy_structure(str), []),
+          (Obj.magic(str), []),
         )
       | `Interface(int) =>
-        Reason_toolchain.RE.print_interface_with_comments(
+        Reason.Reason_toolchain.RE.print_interface_with_comments(
           Format.str_formatter,
-          (Convert.copy_signature(int), []),
+          (Obj.magic(int), []),
         )
       };
     };

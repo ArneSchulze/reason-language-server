@@ -181,7 +181,7 @@ let rangeBy start finish ~step =
 
 let zip xs ys = 
   let lenx, leny = length xs, length ys in 
-  let len = Pervasives.min lenx leny  in 
+  let len = min lenx leny  in 
   let s = if len > 0 then makeUninitializedUnsafe len (getUnsafe xs 0, getUnsafe ys 0) else [||] in
   for i = 0 to len - 1 do 
     setUnsafe s i (getUnsafe xs i, getUnsafe ys i)
@@ -195,7 +195,7 @@ let zip xs ys =
 *)
 let zipByU xs ys f = 
   let lenx, leny = length xs, length ys in 
-  let len = Pervasives.min lenx leny  in 
+  let len = min lenx leny  in 
   let s = if len > 0 then  makeUninitializedUnsafe len (f (getUnsafe xs 0) (getUnsafe ys 0) [@bs]) else [||] in
   for i = 0 to len - 1 do 
     setUnsafe s i (f (getUnsafe xs i) (getUnsafe ys i) [@bs])

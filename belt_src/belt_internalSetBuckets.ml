@@ -144,7 +144,7 @@ let getMaxBucketLength h =
   A.reduceU (C.buckets h) 0
     (fun[@bs] m b -> 
        let len = bucketLength 0 b in
-       Pervasives.max m len)
+       max m len)
 
 let getBucketHistogram h =
   let mbl = getMaxBucketLength h in 

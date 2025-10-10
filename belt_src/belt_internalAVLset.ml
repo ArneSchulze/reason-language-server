@@ -570,9 +570,9 @@ let rotateWithLeftChild k2 =
   k2 |. leftSet (k1 |. right);
   k1 |. rightSet (return k2 );
   let hlk2, hrk2 = k2 |. left |. treeHeight , k2 |. right |. treeHeight in
-  k2 |. heightSet (Pervasives.max hlk2 hrk2 + 1);
+  k2 |. heightSet (max hlk2 hrk2 + 1);
   let hlk1, hk2 = k1 |. left |. treeHeight , k2 |. height  in
-  k1 |. heightSet (Pervasives.max hlk1 hk2 + 1);
+  k1 |. heightSet (max hlk1 hk2 + 1);
   k1
 (* right rotation *)
 let rotateWithRightChild k1 =
@@ -580,9 +580,9 @@ let rotateWithRightChild k1 =
   k1 |. rightSet  (k2 |. left);
   k2 |. leftSet  (return k1);
   let hlk1, hrk1 = k1 |. left |. treeHeight, k1 |. right |. treeHeight in
-  k1 |. heightSet  (Pervasives.max  hlk1 hrk1 + 1);
+  k1 |. heightSet  (max  hlk1 hrk1 + 1);
   let hrk2, hk1 = k2 |. right |. treeHeight, k1 |. height in
-  k2 |. heightSet (Pervasives.max  hrk2 hk1 + 1);
+  k2 |. heightSet (max  hrk2 hk1 + 1);
   k2
 
 (*
@@ -601,7 +601,7 @@ let doubleWithRightChild k2 =
 
 let heightUpdateMutate t =
   let hlt, hrt = t |. left |. treeHeight, t |. right |. treeHeight  in
-  t |. heightSet (Pervasives.max hlt hrt  + 1);
+  t |. heightSet (max hlt hrt  + 1);
   t
 
 let balMutate nt  =

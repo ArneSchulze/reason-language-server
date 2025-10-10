@@ -9,13 +9,13 @@ external get : 'a array -> int -> 'a = "%array_safe_get"
 let get arr i =
   if (i >= 0) && (i < (length arr)) then Some (getUnsafe arr i) else None
 let getExn arr i =
-  if Pervasives.not ((i >= 0) && (i < (length arr)))
+  if not ((i >= 0) && (i < (length arr)))
   then Js.Exn.raiseError "File \"\", line 37, characters 6-12";
   getUnsafe arr i
 let set arr i v =
   if (i >= 0) && (i < (length arr)) then (setUnsafe arr i v; true) else false
 let setExn arr i v =
-  if Pervasives.not ((i >= 0) && (i < (length arr)))
+  if not ((i >= 0) && (i < (length arr)))
   then Js.Exn.raiseError "File \"\", line 43, characters 4-10";
   setUnsafe arr i v
 let makeUninitialized len = Array.make len Js.undefined
@@ -74,7 +74,7 @@ let rangeBy start finish ~step  =
      arr)
 let zip xs ys =
   let (lenx,leny) = ((length xs), (length ys)) in
-  let len = Pervasives.min lenx leny in
+  let len = min lenx leny in
   let s =
     if len > 0
     then makeUninitializedUnsafe len ((getUnsafe xs 0), (getUnsafe ys 0))
@@ -84,7 +84,7 @@ let zip xs ys =
   s
 let zipByU xs ys f =
   let (lenx,leny) = ((length xs), (length ys)) in
-  let len = Pervasives.min lenx leny in
+  let len = min lenx leny in
   let s =
     if len > 0
     then makeUninitializedUnsafe len (f (getUnsafe xs 0) (getUnsafe ys 0))
@@ -315,3 +315,45 @@ let unzip a =
     (let (v1,v2) = getUnsafe a i in setUnsafe a1 i v1; setUnsafe a2 i v2)
   done;
   (a1, a2)
+
+type simple_module = {
+  dir_name: string;
+  name: string;
+  has_intf: bool;
+  case: bool;
+}
+
+type files = simple_module array
+
+let files_from_paths (paths: string array) = 
+  Array.sort String.compare paths;
+  let length = Array.length paths in
+  let files = ref [] in
+  let idx = ref 0 in
+  while !idx < length do
+    let mIdx = ! idx in
+    let path = Array.get paths mIdx in
+    let (file_no_ext, isIntf) = if Filename.check_suffix path ".ast" then
+        (Filename.chop_suffix path ".ast", false)
+      else if Filename.check_suffix path ".iast" then
+        (Filename.chop_suffix path ".iast", false)
+      else
+        raise (Invalid_argument ("Invalid extension for \"" ^ path ^ "\"")) in
+    let hasBoth = if mIdx + 1 >= length then false else (
+        if isIntf then 
+          let next = Array.get paths (mIdx + 1) in
+          String.equal (file_no_ext ^ ".ast") next
+        else
+          let next = Array.get paths (mIdx + 1) in
+          String.equal (file_no_ext ^ ".iast") next
+      ) in
+    let name = Filename.basename file_no_ext in
+    let dir_name = Filename.dirname file_no_ext in
+    let case = (String.capitalize_ascii name) == name in
+    files := { dir_name; name; has_intf = hasBoth; case } :: !files;
+    if hasBoth then idx := mIdx + 2 else idx := mIdx + 1
+  done;
+  let files = List.rev !files in
+  let arr = Array.of_list files in
+  Array.sort (fun a b -> String.compare a.name b.name) arr;
+  arr

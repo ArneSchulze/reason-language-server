@@ -1,3 +1,4 @@
+open Compiler_libs_406;
 
 type kinds = [ `Function | `Array | `Variable | `Object | `Null | `EnumMember | `Module | `Enum | `Interface | `TypeParameter | `ModuleType ];
 
@@ -266,7 +267,7 @@ module Module = {
     mutable topLevel: list(declared(item)),
   }
   and kind =
-  | Ident(Path.t)
+  | Ident(Compiler_libs_406.Path.t)
   | Structure(contents);
 };
 

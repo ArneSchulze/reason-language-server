@@ -3,8 +3,8 @@ open Compiler_libs_406;
 open Belt.Result;
 
 let tryReadCmi = cmi =>
-  switch (Cmi_format.read_cmi(cmi)) {
-  | exception err => Error("Invalid cmi format " ++ cmi ++ " - probably wrong ocaml version, expected " ++ Config.version ++ " : " ++ Printexc.to_string(err))
+  switch (Compiler_libs_406.Cmi_format.read_cmi(cmi)) {
+  | exception err => Error("Invalid cmi format " ++ cmi ++ " - probably wrong ocaml version, expected " ++ Compiler_libs_406.Config.version ++ " : " ++ Printexc.to_string(err))
   | x => Ok(x)
   };
 
@@ -12,15 +12,16 @@ let tryReadCmt = cmt => {
   if (!Util.Files.exists(cmt)) {
     Error("Cmt file does not exist " ++ cmt)
   } else {
-    switch (Cmt_format.read_cmt(cmt)) {
-    | exception Cmi_format.Error(err) =>
+    switch (Compiler_libs_406.Cmt_format.read_cmt(cmt)) {
+    | exception Compiler_libs_406.Cmi_format.Error(err) =>
       Error("Failed to load " ++ cmt ++ " as a cmt w/ ocaml version " ++
       "406" ++
       ", error: " ++ {
         Cmi_format.report_error(Format.str_formatter, err);
         Format.flush_str_formatter();
       })
-    | exception err => Error("Invalid cmt format " ++ cmt ++ " - probably wrong ocaml version, expected " ++ Config.version ++ " : " ++ Printexc.to_string(err))
+    | exception Cmt_format.Error(Not_a_typedtree(str)) => Error("Invalid cmt format " ++ cmt ++ " - probably wrong ocaml version, expected " ++ Compiler_libs_406.Config.version ++ " : " ++ str)
+    | exception err => Error("Invalid cmt format " ++ cmt ++ " - probably wrong ocaml version, expected " ++ Compiler_libs_406.Config.version ++ " : " ++ Printexc.to_string(err))
     | x => Ok(x)
     };
   }
@@ -74,27 +75,6 @@ let rec getFnArgs = t => {
     | _ => ([], t)
   }
 };
-
-/* Unfortunately we need to depend on previous Compiler_libs_* versions starting
-   with 4.07, otherwise we can't construct an ident with a custom stamp.
- */
-
-
-/* HACK(jared): They removed all way for me to produce an "Ident.t" with the correct stamp.
-   They forced my hand.
-*/
-let convertIdent = (oldIdent) => {
-  (Obj.magic(Current.Local { name: oldIdent.Ident.name, stamp: oldIdent.Ident.stamp }): Current.abstract_ident);
-};
-
-let rec mapOldPath = oldPath => {
-  switch (oldPath) {
-    | Path.Pident(oldIdent) => Current.Pident(convertIdent(oldIdent))
-    | Path.Pdot(inner, name, _) => Current.Pdot(mapOldPath(inner),name)
-    | Path.Papply(one, two) => Current.Papply(mapOldPath(one), mapOldPath(two))
-  }
-};
-
 let rec asSimpleType = t => {
   open SharedTypes;
   switch (dig(t).desc) {
@@ -163,50 +143,13 @@ let asSimpleDeclaration = (name, t) => {
   }
 };
 
-let migrateAttributes = t => {
-  t.Types.type_attributes
-    ->Belt.List.map(
-      (({Asttypes.txt, loc}, payload)) => {
-    let payload = switch payload {
-      | PStr(structure) =>
-        Current.PStr(Current.Parser.implementation(Current.Lexer.token, Stdlib.Lexing.from_string({
-          Pprintast.structure(Stdlib.Format.str_formatter, structure);
-          Stdlib.Format.flush_str_formatter()
-        })))
-      | PPat(pattern, guard) => Current.PPat(Current.Parser.parse_pattern(Current.Lexer.token, Stdlib.Lexing.from_string({
-          Pprintast.pattern(Stdlib.Format.str_formatter, pattern)
-          Stdlib.Format.flush_str_formatter()
-        })), switch guard {
-          | None => None
-          | Some(expr) => Some(Current.Parser.parse_expression(Current.Lexer.token, Stdlib.Lexing.from_string({
-            Pprintast.expression(Stdlib.Format.str_formatter, expr);
-            Stdlib.Format.flush_str_formatter()
-          })))
-        })
-      | PTyp(typ) => Current.PTyp(Current.Parser.parse_core_type(Current.Lexer.token, Stdlib.Lexing.from_string({
-          Pprintast.core_type(Stdlib.Format.str_formatter, typ);
-          Stdlib.Format.flush_str_formatter()
-        })))
-      | PSig(signature) => Current.PSig(Current.Parser.interface(Current.Lexer.token, Stdlib.Lexing.from_string({
-        Pprintast.signature(Stdlib.Format.str_formatter, signature);
-        Stdlib.Format.flush_str_formatter()
-      })))
-    };
-    {
-      Current.Parsetree.attr_name: Current.mknoloc(txt),
-      attr_payload: payload,
-      attr_loc: loc
-    }
-  });
-};
-
 let makeDeclaration = t => {
   SharedTypes.declToString: name =>
 PrintType.default.decl(PrintType.default, name, name, t) |> PrintType.prettyString,
   declarationKind: typeKind(t),
   asSimpleDeclaration: name => asSimpleDeclaration(name, t)
-  |> SharedTypes.SimpleType.declMapSource(mapOldPath),
-  migrateAttributes: () => migrateAttributes(t),
+  |> SharedTypes.SimpleType.declMapSource(x => x),
+  migrateAttributes: () => t.Types.type_attributes,
 }
 
 let labelToString = label => switch label {
@@ -223,14 +166,13 @@ let rec makeFlexible = t => {
   getConstructorPath: () => switch (digConstructor(t)) {
     | None => None
     | Some((path, args)) =>
-      let newPath = mapOldPath(path);
-      Some((newPath, args |> List.map(makeFlexible)))
+      Some((path, args |> List.map(makeFlexible)))
   },
   getArguments: () => {
       loop(t)
   },
   asSimpleType: () => asSimpleType(t)
- |> SharedTypes.SimpleType.mapSource(mapOldPath)
+ |> SharedTypes.SimpleType.mapSource(x => x)
 }
 
 and loop = t => switch (t.Types.desc) {

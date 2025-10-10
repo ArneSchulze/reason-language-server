@@ -47,10 +47,10 @@ if (typeof me !== "number") {
 var aThing = 10 + Other.something | 0;
 
 function transform(x, y) {
-  return x + Pervasives.string_of_float(y);
+  return x + string_of_float(y);
 }
 
-"hello " + Pervasives.string_of_float(5);
+"hello " + string_of_float(5);
 
 var added = 110;
 

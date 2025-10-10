@@ -15,7 +15,7 @@
 (**************************************************************************)
 
 (* The main OCaml version string has moved to ../VERSION *)
-let version = Sys.ocaml_version
+let version = "vendored"
 
 let standard_library_default = "/usr/local/lib/ocaml"
 

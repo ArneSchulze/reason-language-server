@@ -70,8 +70,8 @@
     module Comparable1 = Belt.Id.MakeComparable(struct
         type t = int * int
         let cmp (a0, a1) (b0, b1) =
-          match Pervasives.compare a0 b0 with
-          | 0 -> Pervasives.compare a1 b1
+          match compare a0 b0 with
+          | 0 -> compare a1 b1
           | c -> c
     end)
 
@@ -80,8 +80,8 @@
     module Comparable2 = Belt.Id.MakeComparable(struct
       type t = int * int
       let cmp (a0, a1) (b0, b1) =
-        match Pervasives.compare a0 b0 with
-        | 0 -> Pervasives.compare a1 b1
+        match compare a0 b0 with
+        | 0 -> compare a1 b1
         | c -> c
     end)
 

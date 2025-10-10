@@ -256,6 +256,8 @@ let findProjectFiles = (~debug, namespace, root, sourceDirectories, compiledBase
             None
           }
       }
+    } else if (Filename.check_suffix(path, ".rei") || Filename.check_suffix(path, ".mli")) {
+      None;
     } else {
       Log.log("Bad source file (extension) " ++ path);
       None
@@ -316,6 +318,7 @@ let findDependencyFiles = (~debug, ~buildSystem, base, config) => {
            ModuleResolution.resolveNodeModulePath(~startPath=base, name)
            |?> (
              loc => {
+               let loc = try (Unix.realpath(loc)) { | _ => loc};
                let innerPath = loc /+ "bsconfig.json";
                Log.log("Dep loc " ++ innerPath);
                switch (Files.readFile(innerPath)) {

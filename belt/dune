@@ -2,6 +2,6 @@
 
 (library
   (public_name reason-language-server.Belt)
-  (c_names stubs)
+  (foreign_stubs (language c) (names stubs))
   (flags :standard -w -A)
   (name Belt))

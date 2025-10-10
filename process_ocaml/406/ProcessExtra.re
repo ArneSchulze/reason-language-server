@@ -3,6 +3,8 @@ open Compiler_libs_406;
 open Typedtree;
 open SharedTypes;
 open Infix;
+open EnvUtils;
+open OdocUtils;
 
 let handleConstructor = (path, txt) => {
   let typeName =
@@ -43,7 +45,7 @@ let findClosestMatchingOpen = (opens, path, ident, loc) => {
   let%opt openNeedle = relative(ident, path);
 
   let matching = Hashtbl.fold((_, op, res) => {
-    if (Utils.locWithinLoc(loc, op.extent) && Current.samePath(op.path, Shared.mapOldPath(openNeedle))) {
+    if (Utils.locWithinLoc(loc, op.extent) && Path.same(op.path, openNeedle)) {
       [op, ...res]
     } else {
       res
@@ -83,16 +85,97 @@ let getTypeAtPath = (~env, path) => {
 };
 
 module F = (Collector: {
+  let filepath: string;
+
   let extra: extra;
   let file: file;
   let scopeExtent: ref(list(Location.t));
+
+  let envs: ref(list(Env.t));
+
   let allLocations: bool;
+
+  let processDoc: (~location: Compiler_libs_406.Location.t, ~resolveLink: string => (option(string), string), string) => string;
 }) => {
   let extra = Collector.extra;
+  let file = Collector.file;
+  let filepath = Collector.filepath;
+
+  let envs = Collector.envs;
+  let lastEnvs = ref([]);
+
+  let addEnv = env => {
+    envs := [env, ...envs^];
+    lastEnvs := [envs^, ...lastEnvs^];
+  };
+
+  let addEnvs = env => {
+    envs := List.concat([env, envs^]);
+    lastEnvs := [envs^, ...lastEnvs^];
+  }
+
+  let resetEnv = env => {
+    switch (lastEnvs^) {
+      | [hd, ...tail] =>
+        envs := hd;
+        lastEnvs := tail;
+      | [] =>
+        envs := [];
+        lastEnvs := [];
+    }
+  }
+
+  let rec unwind_lident = (l, ps) =>
+    switch (l) {
+      | Longident.Lident(n) => [n, ...ps]
+      | Longident.Ldot(inner, name) => unwind_lident(inner, [name, ...ps])
+      | Longident.Lapply(_, _) => assert false
+    }
+
+  let rec wind_lident = (ps, l) => {
+    switch (ps, l) {
+      | ([], _) => 
+        l |> Option.get
+      | ([name, ...rest], _) =>
+        switch (l) {
+          | None => wind_lident(rest, Some(Longident.Lident(name)))
+          | Some(acc) => wind_lident(rest, Some(Longident.Ldot(acc, name)))
+        }
+    }
+  }
+
+  let resolveWithEnvs = (unparsed) => {
+  switch (parseReference(unparsed)) {
+    | None => (None, unparsed)
+    | Some(lookupPath) => 
+      let res = findInEnvs(envs^, lookupPath) |?>> locToUri(filepath);
+      
+      let res =
+        switch (res) {
+          | None => 
+            let lookupPath = {
+              ...lookupPath,
+              envPath: switch (lookupPath.envPath) {
+                | Some(l) => Some(wind_lident([file.moduleName, ...unwind_lident(l, [])], None))
+                | None => Some(Longident.Lident(file.moduleName))
+              }
+            }
+            findInEnvs(envs^, lookupPath) |?>> locToUri(filepath);
+          | Some(_) as res => res
+        };
+
+      (res, lookupPath.envPath->Belt.Option.mapWithDefault(lookupPath.additionalLookup->Belt.Option.mapWithDefault(unparsed, add => add.name), p => {
+        let p = lident_to_string(p);
+        lookupPath.additionalLookup->Belt.Option.mapWithDefault(p, add => p ++ "." ++ add.name)
+      }));
+    };
+  }
+
+  let processDoc = Collector.processDoc(~resolveLink=resolveWithEnvs);
 
   let maybeAddUse = (path, ident, loc, tip) => {
     let%opt_consume tracker = findClosestMatchingOpen(extra.opens, path, ident, loc);
-    let%opt_consume relpath = Query.makeRelativePath(tracker.path, Shared.mapOldPath(path));
+    let%opt_consume relpath = Query.makeRelativePath(tracker.path, (path));
 
     tracker.used = [(relpath, tip, loc), ...tracker.used];
   };
@@ -107,11 +190,39 @@ module F = (Collector: {
 
   let getTypeAtPath = getTypeAtPath(~env);
 
+  let addForPathModule = (path, lident, loc, tip) => {
+    maybeAddUse(path, lident, loc, tip);
+    let identName = Longident.last(lident);
+    let identLoc = Utils.endOfLocation(loc, String.length(identName));
+    let path = (path);
+    let locType = switch (Query.fromCompilerPath(~env, path)) {
+      | `Stamp(stamp) => {
+        addReference(stamp, identLoc);
+        Loc.LocalReference(stamp, tip);
+      }
+      | `Not_found => Loc.NotFound
+      | `Global(moduleName, path) => {
+        addExternalReference(moduleName, path, tip, identLoc);
+        Loc.GlobalReference(moduleName, path, tip)
+      }
+      | `Exported(env, name) => {
+        let res = {
+          let%opt_wrap stamp = Query.hashFind(env.exported.values, name);
+          addReference(stamp, identLoc);
+          Loc.LocalReference(stamp, tip)
+        };
+        res |? Loc.NotFound
+      }
+      | `GlobalMod(_) => Loc.NotFound
+    };
+    addLocation(loc, Loc.Module(locType));
+  };
+
   let addForPath = (path, lident, loc, typ, tip) => {
     maybeAddUse(path, lident, loc, tip);
     let identName = Longident.last(lident);
     let identLoc = Utils.endOfLocation(loc, String.length(identName));
-    let path = Shared.mapOldPath(path);
+    let path = (path);
     let locType = switch (Query.fromCompilerPath(~env, path)) {
       | `Stamp(stamp) => {
         addReference(stamp, identLoc);
@@ -164,7 +275,7 @@ module F = (Collector: {
   let addForField = (recordType, item, {Asttypes.txt, loc}) => {
     switch (Shared.dig(recordType).desc) {
       | Tconstr(path, _args, _memo) => {
-        let t = getTypeAtPath(Shared.mapOldPath(path));
+        let t = getTypeAtPath((path));
         let {Types.lbl_res} = item;
 
         let (name, typeLident) = handleConstructor(path, txt);
@@ -193,7 +304,7 @@ module F = (Collector: {
   let addForRecord = (recordType, items) => {
     switch (Shared.dig(recordType).desc) {
       | Tconstr(path, _args, _memo) => {
-        let t = getTypeAtPath(Shared.mapOldPath(path));
+        let t = getTypeAtPath((path));
         items |> List.iter((({Asttypes.txt, loc}, {Types.lbl_res}, _)) => {
           /* let name = Longident.last(txt); */
 
@@ -230,7 +341,7 @@ module F = (Collector: {
         maybeAddUse(path, typeLident, loc, Constructor(name));
 
         let nameLoc = Utils.endOfLocation(loc, String.length(name));
-        let t = getTypeAtPath(Shared.mapOldPath(path));
+        let t = getTypeAtPath((path));
         let locType = switch (t) {
           | `Local({stamp, contents: {kind: Variant(constructos)}}) => {
             {
@@ -270,13 +381,13 @@ module F = (Collector: {
       if (isPpx) {
         switch (top) {
           | Some((t, tip)) => addForPath(path, txt, loc, t, tip)
-          | None => addForPathParent(Shared.mapOldPath(path), loc)
+          | None => addForPathParent((path), loc)
           }
       } else {
         let l = Utils.endOfLocation(loc, String.length(Longident.last(txt)));
         switch (top) {
           | Some((t, tip)) => addForPath(path, txt, l, t, tip)
-          | None => addForPathParent(Shared.mapOldPath(path), l)
+          | None => addForPathParent((path), l)
         };
         switch (path, txt) {
           | (Pdot(pinner, _pname, _), Ldot(inner, name)) => {
@@ -303,40 +414,71 @@ module F = (Collector: {
     | _ => ()
   };
 
-  open Typedtree;
-  include TypedtreeIter.DefaultIteratorArgument;
-  let enter_structure_item = item => switch (item.str_desc) {
-  | Tstr_attribute(({Asttypes.txt: "ocaml.explanation", loc}, PStr([{pstr_desc: Pstr_eval({pexp_desc: Pexp_constant(
-      Pconst_string
-      (doc, _))}, _)}]))) => {
-    addLocation(loc, Loc.Explanation(doc))
-  }
-  | Tstr_include({incl_mod: expr}) => {
-    handle_module_expr(expr.mod_desc)
-  }
-  | Tstr_module({mb_expr}) =>
-    handle_module_expr(mb_expr.mod_desc)
-  | Tstr_open({open_path, open_txt: {txt, loc} as l}) => {
-    /* Log.log("Have an open here"); */
-    maybeAddUse(open_path, txt, loc, Module);
-    let tracker = {
-      path: Shared.mapOldPath(open_path),
-      loc,
-      ident: l,
-      used: [],
-      extent: {
-        loc_ghost: true,
-        loc_start: loc.loc_end,
-        loc_end: currentScopeExtent().loc_end,
-      }
-    };
-    addForLongident(None, open_path, txt, loc);
-    Hashtbl.replace(Collector.extra.opens, loc, tracker);
-  }
-  | _ => ()
+  let rec handle_module_typ = expr => switch expr {
+    | Tmod_constraint(expr, _, _, _) => handle_module_expr(expr.mod_desc)
+    | Tmod_ident(path, {txt, loc}) =>
+      Log.log("Ident!! " ++ String.concat(".", Longident.flatten(txt)));
+      maybeAddUse(path, txt, loc, Module);
+      addForLongident(None, path, txt, loc);
+    | Tmod_functor(_ident, _argName, _maybeType, resultExpr) =>
+      handle_module_expr(resultExpr.mod_desc)
+    | Tmod_apply(obj, arg, _) =>
+      handle_module_expr(obj.mod_desc);
+      handle_module_expr(arg.mod_desc);
+    | _ => ()
   };
 
-  let enter_structure = ({str_items}) =>
+  open Typedtree;
+  include TypedtreeIter.DefaultIteratorArgument;
+  let enter_structure_item = item => {
+    addEnv(item.str_env);
+    switch (item.str_desc) {
+    | Tstr_attribute(({Asttypes.txt: "ocaml.explanation", loc}, PStr([{pstr_desc: Pstr_eval({pexp_desc: Pexp_constant(
+        Pconst_string
+        (doc, _))}, _)}]))) => {
+      addLocation(loc, Loc.Explanation(doc))
+    }
+    | Tstr_include({incl_mod: expr}) => {
+      addEnv(expr.mod_env);
+      handle_module_expr(expr.mod_desc);
+      resetEnv();
+    }
+    | Tstr_module({mb_expr}) =>
+      addEnv(mb_expr.mod_env);
+      handle_module_expr(mb_expr.mod_desc);
+      resetEnv();
+    | Tstr_recmodule(mod_list) => mod_list |> List.iter(({mb_expr}) => {
+        addEnv(mb_expr.mod_env);
+        handle_module_expr(mb_expr.mod_desc);
+        resetEnv()
+      })
+    | Tstr_open({open_path, open_txt: {txt, loc} as l}) => {
+      /* Log.log("Have an open here"); */
+      maybeAddUse(open_path, txt, loc, Module);
+      let tracker = {
+        path: (open_path),
+        loc,
+        ident: l,
+        used: [],
+        extent: {
+          loc_ghost: true,
+          loc_start: loc.loc_end,
+          loc_end: currentScopeExtent().loc_end,
+        }
+      };
+      addForLongident(None, open_path, txt, loc);
+      Hashtbl.replace(Collector.extra.opens, loc, tracker);
+    }
+    | _ => ()
+    }
+  };
+
+  let leave_structure_item = _ => {
+    resetEnv();
+  }
+
+  let enter_structure = ({str_items, str_final_env}) => {
+    addEnv(str_final_env);
     if (str_items != []) {
       let first = List.hd(str_items);
       let last = List.nth(str_items, List.length(str_items) - 1);
@@ -349,41 +491,77 @@ module F = (Collector: {
 
       addScopeExtent(extent);
     };
+  };
 
   let leave_structure = str => {
     if (str.str_items != []) {
       popScopeExtent();
     }
+    resetEnv();
   };
 
-  let enter_signature_item = item => switch (item.sig_desc) {
-  | Tsig_value({val_id, val_loc, val_name: name, val_desc, val_attributes}) => {
-    let stamp = Ident.binding_time(val_id);
-    if (!Hashtbl.mem(Collector.file.stamps.values, stamp)) {
-      let declared = ProcessAttributes.newDeclared(
-        ~name,
-        ~stamp,
-        ~extent=val_loc,
-        ~scope={
-          loc_ghost: true,
-          loc_start: val_loc.loc_end,
-          loc_end: currentScopeExtent().loc_end,
-        },
-        ~modulePath=NotVisible,
-        ~processDoc=x => x,
-        ~contents={Value.typ: Shared.makeFlexible(val_desc.ctyp_type), recursive: false},
-        false,
-        val_attributes
-      );
-      Hashtbl.add(Collector.file.stamps.values, stamp, declared);
-      addReference(stamp, name.loc);
-      addLocation(name.loc, Loc.Typed(Shared.makeFlexible(val_desc.ctyp_type), Loc.Definition(stamp, Value)));
+  let enter_signature_item = (item) => {
+    addEnv(item.sig_env);
+    switch (item.sig_desc) {
+    | Tsig_value({val_id, val_loc, val_name: name, val_desc, val_attributes}) => {
+      let stamp = Ident.binding_time(val_id);
+      if (!Hashtbl.mem(Collector.file.stamps.values, stamp)) {
+        let declared = ProcessAttributes.newDeclared(
+          ~name,
+          ~stamp,
+          ~extent=val_loc,
+          ~scope={
+            loc_ghost: true,
+            loc_start: val_loc.loc_end,
+            loc_end: currentScopeExtent().loc_end,
+          },
+          ~modulePath=NotVisible,
+          ~processDoc=processDoc,
+          ~contents={Value.typ: Shared.makeFlexible(val_desc.ctyp_type), recursive: false},
+          false,
+          List.concat([val_attributes, val_desc.ctyp_attributes])
+        );
+        Hashtbl.add(Collector.file.stamps.values, stamp, declared);
+        addReference(stamp, name.loc);
+        addLocation(name.loc, Loc.Typed(Shared.makeFlexible(val_desc.ctyp_type), Loc.Definition(stamp, Value)));
+      }
     }
+    | Tsig_include({incl_mod}) => {
+        switch (incl_mod.mty_desc) {
+        | Tmty_ident(path, ident)
+        | Tmty_alias(path, ident) =>
+          addForPathModule(path, ident.txt, ident.loc, Module);
+        | Tmty_with(mod_type, constraints) => 
+          constraints |> List.iter(((path, ident: Location.loc(Longident.t), c)) => {switch c {
+            | Twith_type(typ_decl)
+            | Twith_typesubst(typ_decl) =>
+              switch (typ_decl.typ_type.type_manifest) {
+                | None => ()
+                | Some(typ) =>
+                  addForPath(path, ident.txt, ident.loc, Shared.makeFlexible(typ), Type)
+              }
+            | Twith_module(path, ident)
+            | Twith_modsubst(path, ident) =>
+              addForPathModule(path, ident.txt, ident.loc, Module);
+          }});
+          switch (mod_type.mty_desc) {
+            | Tmty_ident(path, ident) => addForPathModule(path, ident.txt, ident.loc, ModuleType);
+            | Tmty_alias(path, ident) => addForPathModule(path, ident.txt, ident.loc, ModuleType);
+            | _ => ()
+          }
+        | _ => ()
+        }
+    }
+    | _ => ()
+    };
   }
-  | _ => ()
+
+  let leave_structure_item = _ => {
+    resetEnv();
   };
 
-  let enter_core_type = ({ctyp_type, ctyp_desc}) => {
+  let enter_core_type = ({ctyp_type, ctyp_desc, ctyp_env}) => {
+    addEnv(ctyp_env);
     switch (ctyp_desc) {
       | Ttyp_constr(path, {txt, loc}, _args) => {
         /* addForPath(path, txt, loc, Shared.makeFlexible(ctyp_type), Type) */
@@ -396,8 +574,13 @@ module F = (Collector: {
     }
   };
 
+  let leave_core_type = _ => {
+    resetEnv();
+  };
 
-  let enter_pattern = ({pat_desc, pat_loc, pat_type, pat_attributes}) => {
+
+  let enter_pattern = ({pat_desc, pat_loc, pat_type, pat_attributes, pat_env}) => {
+    addEnv(pat_env);
     let addForPattern = (stamp, name) => {
         if (!Hashtbl.mem(Collector.file.stamps.values, stamp)) {
           let declared = ProcessAttributes.newDeclared(
@@ -410,7 +593,7 @@ module F = (Collector: {
             },
             ~modulePath=NotVisible,
             ~extent=pat_loc,
-            ~processDoc=x => x,
+            ~processDoc=processDoc,
             ~contents={Value.typ: Shared.makeFlexible(pat_type), recursive: false},
             false,
             pat_attributes
@@ -444,11 +627,16 @@ module F = (Collector: {
     };
   };
 
+  let leave_pattern = _ => {
+    resetEnv();
+  };
+
   let enter_expression = expression => {
+    addEnv(expression.exp_env);
     expression.exp_extra |. Belt.List.forEach(((e, eloc, _)) => switch e {
       | Texp_open(_, path, ident, _) => {
         extra.opens |. Hashtbl.add(eloc, {
-          path: Shared.mapOldPath(path),
+          path: (path),
           ident,
           loc: eloc,
           extent: expression.exp_loc,
@@ -517,7 +705,7 @@ module F = (Collector: {
     }
     | _ => ()
     };
-
+    resetEnv();
   };
 };
 
@@ -525,15 +713,19 @@ let forFile = (~file) => {
   let extra = initExtra();
   let addLocation = (loc, ident) => extra.locations = [(loc, ident), ...extra.locations];
   let addReference = (stamp, loc) => Hashtbl.replace(extra.internalReferences, stamp, [loc, ...Hashtbl.mem(extra.internalReferences, stamp) ? Hashtbl.find(extra.internalReferences, stamp) : []]);
-  file.stamps.modules |> Hashtbl.iter((stamp, d) => {
+  file.stamps.modules |> Hashtbl.iter((stamp, d: declared(Module.kind)) => {
     addLocation(d.name.loc, Loc.Module(Loc.Definition(stamp, Module)));
     addReference(stamp, d.name.loc);
   });
-  file.stamps.values |> Hashtbl.iter((stamp, d) => {
+  file.stamps.moduleTypes |> Hashtbl.iter((stamp, d: declared(Module.kind)) => {
+    addLocation(d.name.loc, Loc.Module(Loc.Definition(stamp, ModuleType)));
+    addReference(stamp, d.name.loc);
+  });
+  file.stamps.values |> Hashtbl.iter((stamp, d: declared(Value.t)) => {
     addLocation(d.name.loc, Loc.Typed(d.contents.Value.typ, Loc.Definition(stamp, Value)));
     addReference(stamp, d.name.loc);
   });
-  file.stamps.types |> Hashtbl.iter((stamp, d) => {
+  file.stamps.types |> Hashtbl.iter((stamp, d: declared(Type.t)) => {
     addLocation(d.name.loc, Loc.TypeDefinition(d.name.txt, d.contents.Type.typ, stamp));
     addReference(stamp, d.name.loc);
     switch (d.contents.Type.kind) {
@@ -557,10 +749,10 @@ let forFile = (~file) => {
   extra;
 };
 
-let forItems = (~file, ~allLocations, items, parts) => {
+let forItems = (~file, ~allLocations, ~processDoc, items, envs, parts) => {
   let extra = forFile(~file);
 
-  let extent = ProcessCmt.itemsExtent(items);
+  let extent = ProcessCmt.itemsExtentNoEnv(items);
   let extent = {...extent, loc_end: {
     ...extent.loc_end,
     pos_lnum: extent.loc_end.pos_lnum + 1000000,
@@ -569,12 +761,22 @@ let forItems = (~file, ~allLocations, items, parts) => {
 
   /* TODO look through parts and extend the extent */
 
-  let module Iter = TypedtreeIter.MakeIterator(F({
+  module Collector = {
+    let filepath = Utils.parseUri(file.uri) |> Option.get;
+
+
     let scopeExtent = ref([extent]);
+
+    let envs = ref(envs);
+
     let extra = extra;
     let file = file;
     let allLocations = allLocations;
-  }));
+
+    let processDoc = processDoc;
+  };
+
+  let module Iter = TypedtreeIter.MakeIterator(F(Collector));
 
   List.iter(Iter.iter_structure_item, items);
   /* Log.log("Parts " ++ string_of_int(Array.length(parts))); */
@@ -599,23 +801,49 @@ let forItems = (~file, ~allLocations, items, parts) => {
 };
 
 open RResult;
-let forCmt = (~file, ~allLocations, {cmt_annots}: Cmt_format.cmt_infos) => switch cmt_annots {
+let forCmt = (~file, ~allLocations, ~processDoc, {cmt_annots}: Cmt_format.cmt_infos) => switch cmt_annots {
 | Partial_implementation(parts) => {
-  let items = parts |. Array.to_list |. Belt.List.keepMap(p => switch p {
+  let partsList = parts |. Array.to_list;
+
+  let envs =  partsList |> List.rev |> List.concat_map(part => switch part {
+    | Cmt_format.Partial_structure(str) => [str.str_final_env]
+    | Partial_structure_item(str) => [str.str_env]
+    | Partial_expression(exp) => [exp.exp_env]
+    | Partial_pattern(pat) => [pat.pat_env]
+    | Partial_class_expr(ce) => [ce.cl_env]
+    | Partial_module_type(mty) => [mty.mty_env]
+    | Partial_signature(sig_) => [sig_.sig_final_env]
+    | Partial_signature_item(sig_) => [sig_.sig_env]
+  });
+
+  let items = partsList |. Belt.List.keepMap(p => switch p {
     | Partial_structure(str) => Some(str.str_items)
     | Partial_structure_item(str) => Some([str])
     /* | Partial_expression(exp) => Some([ str]) */
     | _ => None
   }) |> List.concat;
-  Ok(forItems(~file, ~allLocations, items, parts))
+  Ok(forItems(~file, ~allLocations, ~processDoc, items, envs, parts))
 }
 | Implementation(structure) => {
-  Ok(forItems(~file, ~allLocations, structure.str_items, [||]))
+  Ok(forItems(~file, ~allLocations, ~processDoc, structure.str_items, [structure.str_final_env], [||]))
 }
-| Partial_interface(_)
-| Interface(_) => {
+| Partial_interface(pt) => {
+    let envs =  pt |> Array.to_list |> List.rev |> List.concat_map(part => switch part {
+      | Cmt_format.Partial_structure(str) => [str.str_final_env]
+      | Partial_structure_item(str) => [str.str_env]
+      | Partial_expression(exp) => [exp.exp_env]
+      | Partial_pattern(pat) => [pat.pat_env]
+      | Partial_class_expr(ce) => [ce.cl_env]
+      | Partial_module_type(mty) => [mty.mty_env]
+      | Partial_signature(sig_) => [sig_.sig_final_env]
+      | Partial_signature_item(sig_) => [sig_.sig_env]
+    });
+
+    Ok(forItems(~file, ~allLocations, ~processDoc, [], envs, [||]))
+  }
+| Interface(sig_) => {
   /** TODO actually process signature items */
-  Ok(forItems(~file, ~allLocations, [], [||]))
+  Ok(forItems(~file, ~allLocations, ~processDoc, [], [sig_.sig_final_env], [||]))
 }
 | _ => Error("Invalid cmt file")
 };

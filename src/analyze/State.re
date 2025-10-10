@@ -27,45 +27,28 @@ module Show = {
 let isMl = path =>
   Filename.check_suffix(path, ".ml") || Filename.check_suffix(path, ".mli");
 
-let odocToMd = text => MarkdownOfOCamldoc.convert(text);
+let odocToMd = (~resolveLink, ~location, text) => MarkdownOfOCamldoc.convert(~resolveLink, ~location, text);
 let compose = (fn1, fn2, arg) => fn1(arg) |> fn2;
 
-let converter = (src, usePlainText, useOdocForReason) => {
-  let odocToOutput = compose(odocToMd, usePlainText ? Omd.to_text : Omd.to_markdown);
-  let mdToOutput = usePlainText ? compose(Omd.of_string, Omd.to_text) : (x => x);
-  let converter = fold(
+let converter = (~location, ~resolveLink, src, usePlainText, useOdocForReason) => {
+  let odocToOutput = odocToMd(~resolveLink, ~location);
+  let mdToOutput = x => x;
+  fold(
     src,
     odocToOutput,
     src => useOdocForReason || isMl(src) ? odocToOutput : mdToOutput
   );
-
-  src => {
-    let res = converter(src);
-
-    Log.log("src: " ++src ++ ", res: " ++ res);
-    res;
-  }
 };
 
 let newDocsForCmt = (~compilerVersion, ~moduleName, cmtCache, changed, cmt, src, clientNeedsPlainText, useOdocForReason) => {
   let uri = Utils.toUri(src |? cmt);
-  let%opt file = (switch compilerVersion {
-    | BuildSystem.V402 => Process_402.fileForCmt
-    | V406 => Process_406.fileForCmt
-    | V407 => Process_407.fileForCmt
-    | V408 => Process_408.fileForCmt
-  })(~moduleName, cmt, uri, converter(src, clientNeedsPlainText, useOdocForReason)) |> RResult.toOptionAndLog;
+  let%opt file = Process_406.fileForCmt(~moduleName, cmt, uri, converter(src, clientNeedsPlainText, useOdocForReason)) |> RResult.toOptionAndLog;
   Hashtbl.replace(cmtCache, cmt, (changed, file));
   Some(file);
 };
 
 let newDocsForCmi = (~compilerVersion, ~moduleName, cmiCache, changed, cmi, src, clientNeedsPlainText, useOdocForReason) => {
-  let%opt file = (switch compilerVersion {
-    | BuildSystem.V402 => Process_402.fileForCmi
-    | V406 => Process_406.fileForCmi
-    | V407 => Process_407.fileForCmi
-    | V408 => Process_408.fileForCmi
-  })(~moduleName, cmi, Utils.toUri(src |? cmi), converter(src, clientNeedsPlainText, useOdocForReason));
+  let%opt file =  Process_406.fileForCmi(~moduleName, cmi, Utils.toUri(src |? cmi), converter(src, clientNeedsPlainText, useOdocForReason));
   Hashtbl.replace(cmiCache, cmi, (changed, file));
   Some(file);
 };
@@ -145,8 +128,8 @@ let docsForCmt = (~package, ~moduleName, cmt, src, state) =>
       None;
     | Some(changed) =>
       newDocsForCmt(
-          ~compilerVersion=package.compilerVersion,
-          ~moduleName,
+        ~compilerVersion=package.compilerVersion,
+        ~moduleName,
         state.cmtCache,
         changed,
         cmt,
@@ -246,10 +229,7 @@ let getInterfaceFile = (uri, state, ~package: TopTypes.package) => {
   AsYouType.getInterface(
     ~moduleName,
     ~basePath=package.basePath,
-    ~reasonFormat=switch (package.buildSystem) {
-      | Bsb(_) | BsbNative(_, Js) => Utils.endsWith(uri, "re") || Utils.endsWith(uri, "rei")
-      | _ => false
-    },
+    ~reasonFormat=Utils.endsWith(uri, "re") || Utils.endsWith(uri, "rei"),
     text,
     ~cacheLocation=package.tmpPath,
     package.compilerPath,
@@ -289,10 +269,7 @@ let getCompilationResult = (uri, state, ~package: TopTypes.package) => {
       ~moduleName,
       ~allLocations=state.settings.recordAllLocations,
       ~basePath=package.basePath,
-      ~reasonFormat=switch (package.buildSystem) {
-        | Bsb(_) | BsbNative(_, Js) => Utils.endsWith(uri, "re") || Utils.endsWith(uri, "rei")
-        | _ => false
-      },
+      ~reasonFormat=Utils.endsWith(uri, "re") || Utils.endsWith(uri, "rei"),
       text,
       ~cacheLocation=package.tmpPath,
       package.compilerPath,

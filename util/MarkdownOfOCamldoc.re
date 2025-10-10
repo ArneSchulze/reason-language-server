@@ -1,172 +1,262 @@
-
-open Comment;
+open Odoc_parser;
 
 let withStyle = (style, contents) => switch style {
-| `Bold => Omd.Bold(contents)
-| `Italic => Omd.Emph(contents)
-| `Emphasis => Omd.Emph(contents)
-| `Superscript => Omd.Raw("Superscript")
-| `Subscript => Omd.Raw("Subscript")
+| `Bold => Omd.Strong([], contents)
+| `Italic => Omd.Emph([], contents)
+| `Emphasis => Omd.Emph([], contents)
+| `Superscript => Omd.Emph([], contents)
+| `Subscript => Omd.Emph([], contents)
 };
 
-let stripLoc = (fn, item) => fn(item.Location_.value);
-
-let whiteLeft = text => {
-  let ln = String.length(text);
-  let rec loop = i => {
-    i >= ln ? i - 1 : (text.[i] == ' ' ? loop(i + 1) : i)
+let pp_styled = (formatter, style, format, contents) =>
+  switch (style) {
+  | `Bold => Format.fprintf(formatter, "**%a**", format, contents)
+  | `Italic
+  | `Emphasis
+  | `Subscript
+  | `Superscript => Format.fprintf(formatter, "_%a_", format, contents)
   };
-  loop(0)
-};
 
-let sliceToEnd = (text, num) => {
-  let ln = String.length(text);
-  if (ln <= num) {
-    ""
+let rec find_tick_repetition = (str, char, index, chain, longest) =>
+  if (index >= String.length(str)) {
+    longest;
   } else {
-    String.sub(text, num, ln - num)
-  }
-};
-
-let stripLeft = text => {
-  let lines = Str.split(Str.regexp_string("\n"), text);
-  let rec loop = lines => switch lines {
-  | [] => 0
-  | [one] => whiteLeft(one)
-  | [one, ...more] => min(whiteLeft(one), loop(more))
+    if (str.[index] == char) {
+      find_tick_repetition(str, char, index + 1, chain + 1, longest);
+    } else {
+      find_tick_repetition(str, char, index + 1, 0, if (chain > longest) { chain } else { longest });
+    }
   };
-  let min = loop(lines |> List.filter(x => String.trim(x) != ""));
-  String.concat("\n", List.map(line => sliceToEnd(line, min), lines))
-};
 
-let makeHeader = (level, content) => {
-  switch level {
-  | `Title => Omd.H1(content)
-  | `Section => Omd.H2(content)
-  | `Subsection => Omd.H3(content)
-  | `Subsubsection => Omd.H4(content)
-  }
-};
+let find_tick_repetition = (str, char) => find_tick_repetition(str, char, 0, 0, 0);
 
-    /* [ `Module | `ModuleType | `Type
-    | `Constructor | `Field | `Extension
-    | `Exception | `Value | `Class | `ClassType
-    | `Method | `InstanceVariable | `Label | `Page ] */
-let handleRef = reference => switch reference {
-| Paths.Reference.Root(name, _tag) => name
-| Paths.Reference.Resolved(_) => "resolved..."
-| Paths.Reference.Dot(_, name) => name
-| Paths.Reference.Module(_, name) => name
-| Paths.Reference.ModuleType(_, name) => name
-| Paths.Reference.Type(_, name) => name
-| Paths.Reference.Constructor(_, name) => name
-| Paths.Reference.Field(_, name) => name
-| Paths.Reference.Extension(_, name) => name
-| Paths.Reference.Exception(_, name) => name
-| Paths.Reference.Value(_, name) => name
-| Paths.Reference.Class(_, name) => name
-| Paths.Reference.ClassType(_, name) => name
-| Paths.Reference.Method(_, name) => name
-| _ => "(unhandled reference)"
-};
+let rec pp_inline_ele = (~resolveLink, formatter, item: Loc.with_location(Ast.inline_element)) =>
+  switch item.value {
+  | `Space(str) => Format.fprintf(formatter, " ")
+  | `Word(text) => Format.fprintf(formatter, "%s", text)
+  | `Code_span(text) => 
+    let repitition = find_tick_repetition(text, '`');
+    let opener = String.make(repitition + 1, '`');
+    Format.fprintf(formatter, "%s%s%s", opener, text, opener)
+  | `Math_span(text) => 
+    let repitition = find_tick_repetition(text, '$');
+    let opener = String.make(repitition + 1, '$');
+    Format.fprintf(formatter, "%s%s%s", opener, text, opener) // TODO: Separate math?
+  | `Link(href, content) =>
+    Format.fprintf(
+      formatter,
+      "[%a](<%s>)",
+      Format.pp_print_list(pp_inline_ele(~resolveLink)),
+      content,
+      href,
+    )
+  | `Styled(style, contents) =>
+    pp_styled(formatter, style, Format.pp_print_list(pp_inline_ele(~resolveLink)), contents)
+  | `Reference(kind, target, content) =>
+    let (maybeLink, sanitizedTarget) = resolveLink(target.value);
 
-let rec showPath = (path: Path.module_) => switch path {
-  | Resolved(_resolved) => "<resolved>"
-  | Root(name) => name
-  | Forward(name) => name
-  | Dot(inner, name) => showPath(inner) ++ "." ++ name
-  | Apply(one, two) => showPath(one) ++ "(" ++ showPath(two) ++ ")"
-};
+    let content = 
+      switch (content) {
+        | [] => [{Loc.value: `Code_span(sanitizedTarget), location: item.location}]
+        | e => e
+      };
 
-let convertItem = (item) => {
+    switch (maybeLink) {
+      | None =>
+        Format.fprintf(formatter, "%a", Format.pp_print_list(pp_inline_ele(~resolveLink)), content)
+      | Some(link) =>
+        Format.fprintf(
+          formatter,
+          "[%a](<%s>)",
+          Format.pp_print_list(pp_inline_ele(~resolveLink)),
+          content,
+          link,
+        )
+    }
+  | `Raw_markup(_, text) => Format.fprintf(formatter, "%s", text)
+  };
 
-  let rec convertItem = item => switch item.Location_.value {
-  | `Heading(level, _label, content) => makeHeader(level, List.map(convertLink, content))
-  | `Tag(`Author(string)) => Omd.Text("Author: " ++ string)
-  | `Tag(`Deprecated(contents)) => Omd.Paragraph([Omd.Text("Deprecated: "), ...List.map(stripLoc(convertNestable), contents)])
-  | `Tag(`Param(name, contents)) => Omd.Paragraph([Omd.Text("Param: " ++ name), ...List.map(stripLoc(convertNestable), contents)])
-  | `Tag(`Raise(name, contents)) => Omd.Paragraph([Omd.Text("Raises: " ++ name), ...List.map(stripLoc(convertNestable), contents)])
-  | `Tag(`Before(version, contents)) => Omd.Paragraph([Omd.Text("Before: " ++ version), ...List.map(stripLoc(convertNestable), contents)])
-  | `Tag(`Return(contents)) => Omd.Paragraph([Omd.Text("Returns: "), ...List.map(stripLoc(convertNestable), contents)])
-  | `Tag(`See(_, link, contents)) => Omd.Paragraph([Omd.Text("See: "), Omd.Url(link, List.map(stripLoc(convertNestable), contents), "")])
-  | `Tag(`Since(versionString)) => Omd.Text("Since: " ++ versionString)
-  | `Tag(`Version(versionString)) => Omd.Text("Version: " ++ versionString)
-  | `Tag(`Open) => Omd.Text("Open")
-  | `Tag(`Closed) => Omd.Text("Closed")
-  | `Tag(`Inline) => Omd.Text("Inline")
-  | `Tag(`Canonical(path, _reference)) =>
-    // output_string(stderr, "Warning: Unhandled tag 'Canonical' in ocamldoc (please tell the reason-language-server maintainers)\n");
-    Omd.Text(showPath(path)) // ++ ", " ++ handleRef(reference))
-  | `Tag(_) => {
-    output_string(stderr, "Warning: Unhandled tag in ocamldoc (please tell the reason-language-server maintainers)\n");
-    Omd.Text("Unhandled tag")
-  }
-  | #nestable_block_element as item => convertNestable(item)
-  }
-
-  and convertNestable = item => switch item {
-  | `Example(lang, contents) => {
-    let newLang = String.trim(lang) == "" ? "ml" : {
-      let parts = Str.split(Str.regexp_string(";"), String.trim(lang));
-      if (List.mem("ml", parts) || List.mem("ocaml", parts) || List.mem("re", parts) || List.mem("reason", parts)) {
-        lang
-      } else {
-        lang ++ ";ml"
-      }
+let pp_heading = (~resolveLink, formatter, level, content: list(Loc.with_location(Ast.inline_element))) => {
+  let level = switch (level) {
+    | 0 => 1
+    | 1 => 2
+    | 2 => 3
+    | 3 => 4
+    | 5 => 5
+    | _ => 6
     };
-    Omd.Code_block(newLang, stripLeft(contents))
-  }
-  | `Doc(contents) => Omd.Paragraph([Omd.Text("@doc " ++ contents)])
-  | `Paragraph(inline) => Omd.Paragraph(List.map(convertInline, inline))
-  | `Code_block(text) => Omd.Code_block("ml", stripLeft(text))
-  | `Verbatim(text) => Omd.Raw(text) /* TODO */
-  | `Modules(_) => {
-    Log.log("Unhandled modules");
-    Omd.Raw("!!!! Modules please")
-  }
-  | `List(`Ordered, children) => Omd.Ol(List.map(List.map(stripLoc(convertNestable)), children))
-  | `List(`Unordered, children) => Omd.Ul(List.map(List.map(stripLoc(convertNestable)), children))
-  }
-
-  and convertInline = item => switch item.Location_.value {
-  | `Link(href, content) => Omd.Url(href, List.map(convertLink, content), "")
-  | `Styled(style, contents) => withStyle(style, List.map(convertInline, contents))
-  | `Reference(someref, _link) => {
-    let text = handleRef(someref);
-    Omd.Text(text)
-    /* Omd.Url("#TODO-ref", [Omd.Text("REFERENCE"), ...List.map(convertLink, link)], "") */
-  }
-  | #leaf_inline_element as rest => convertLeaf(rest)
-  }
-
-  and convertLink = item => switch item.Location_.value {
-  | `Styled(style, contents) => withStyle(style, List.map(convertLink, contents))
-  | #leaf_inline_element as rest => convertLeaf(rest)
-  }
-
-  and convertLeaf = (item: Comment.leaf_inline_element) => switch item {
-  | `Space => Omd.Text(" ")
-  | `Word(text) => Omd.Text(text)
-  | `Code_span(text) => Omd.Code("", text)
-  };
-
-  convertItem(item)
+  Format.fprintf(
+    formatter,
+    "%s %a",
+    String.make(level, '#'),
+    Format.pp_print_list(pp_inline_ele(~resolveLink)),
+    content,
+  );
 };
 
-let convert = (text) => {
+let pp_module_link = (~resolveLink, formatter, target) => {
+  let (maybeLink, sanitizedTarget) = resolveLink(target.Loc.value);
+  switch (maybeLink) {
+    | None => Format.fprintf(formatter, "`%s`", sanitizedTarget)
+    | Some(link) => Format.fprintf(formatter, "[%s](<%s>)", sanitizedTarget, link)
+  }
+}
+
+let pp_quote_newline = (pp_newline, formatter, ()) => {
+  Format.fprintf(formatter, "%a> ", pp_newline, ());
+}
+
+let pp_block_delimit = (pp_newline, formatter, ()) => {
+  Format.fprintf(formatter, "%a%a", pp_newline, (), pp_newline, ());
+}
+
+let pp_block_list_delimit = (pp_newline, formatter, ()) => {
+  Format.fprintf(formatter, "  %a", pp_newline, ());
+}
+
+let pp_newline_ident = (pp_newline, formatter, ()) => Format.fprintf(formatter, "%a    ", pp_newline, ());
+
+let pp_list_idx = (~pp_sep=(_, _idx) => (), format, formatter, list) => {
+  let rec helper = (l, idx) =>
+    switch (l) {
+      | [] => ()
+      | [x] => Format.fprintf(formatter, "%a", format(idx), x)
+      | [x, ...rest] =>
+        Format.fprintf(formatter, "%a%a", format(idx), x, pp_sep, idx);
+        helper(rest, idx + 1);
+    };
+  helper(list, 1);
+}
+
+let pp_info_box = (pp_newline, tip, format, formatter, content) => {
+  let title = 
+    switch tip {
+      | `Note => "[!NOTE]"
+      | `Tip => "[!TIP]"
+      | `Important => "[!IMPORTANT]"
+      | `Warning => "[!WARNING]"
+      | `Caution => "[!CAUTION]"
+    };
+  let pp_newline = pp_quote_newline(pp_newline);
+  let contentFormat = Format.pp_print_list(~pp_sep=pp_block_list_delimit(pp_newline), format(pp_newline));
+  Format.fprintf(formatter, "%a%s  %a%a", pp_newline, (), title, pp_newline, (), contentFormat, content);
+};
+
+let rec pp_nestable_block_element = (~resolveLink, pp_newline, formatter, item: Loc.with_location(Ast.nestable_block_element)) =>
+  switch item.value {
+  | `Paragraph(inline) =>
+    Format.fprintf(
+      formatter,
+      "%a",
+      Format.pp_print_list(pp_inline_ele(~resolveLink)),
+      inline,
+    )
+  | `Code_block({meta, content: {value}}) =>
+    let lang = meta->Belt.Option.mapWithDefault("ml", meta => meta.language.value);
+    Format.fprintf(formatter, "```%s%a%s%a```", lang, pp_newline, (), value, pp_newline, ())
+  | `Verbatim(text) => Format.fprintf(formatter, "```%a%s%a```", pp_newline, (), text, pp_newline, ()) /* TODO */
+  | `Modules(modules) =>
+    let pp_sep = (formatter, _idx) => {
+      Format.fprintf(formatter, "%a- ", pp_newline, ());
+    }
+    let pp_ele = (_idx) => pp_module_link(~resolveLink);
+    let format = pp_list_idx(~pp_sep, pp_ele);
+    Format.fprintf(formatter, "- %a", format, modules)
+  | `List(`Ordered, _weight, children) =>
+    let pp_sep = (formatter, idx) => {
+      Format.fprintf(formatter, "%a%d. ", pp_newline, (), idx + 1);
+    }
+    let pp_ele = (_idx) => pp_block_elements_in_list(~resolveLink, pp_newline_ident(pp_newline));
+    let format = pp_list_idx(~pp_sep, pp_ele);
+    Format.fprintf(formatter, "1. %a", format, children :> list(list(Loc.with_location(Ast.block_element))));
+  | `List(`Unordered, _weight, children) =>
+    let pp_sep = (formatter, _idx) => {
+      Format.fprintf(formatter, "%a- ", pp_newline, ());
+    }
+    let pp_ele = (_idx) => pp_block_elements_in_list(~resolveLink, pp_newline_ident(pp_newline));
+    let format = pp_list_idx(~pp_sep, pp_ele);
+    Format.fprintf(formatter, "- %a", format, children :> list(list(Loc.with_location(Ast.block_element))))
+  | `Table(_,_)
+  | `Math_block(_)
+  | `Media(_) => ()
+  }
+
+and pp_tag = (~resolveLink, pp_newline, formatter, tag: Loc.with_location([ Ast.ocamldoc_tag | Ast.internal_tag])) =>
+  switch tag.value {
+  | `Author(string) => pp_info_box(pp_newline, `Note, (_) => pp_inline_ele(~resolveLink), formatter, [{value: `Word("Author: " ++ string), location: tag.location}])
+
+  | `Deprecated(contents) => 
+    pp_info_box(pp_newline, `Warning, pp_nestable_block_element(~resolveLink), formatter, contents)
+
+  | `Param(name, contents) => 
+    pp_info_box(pp_newline, `Note, pp_nestable_block_element(~resolveLink), formatter, contents)
+
+  | `Raise(name, contents) => 
+    pp_info_box(pp_newline, `Warning, pp_nestable_block_element(~resolveLink), formatter, [{value: `Paragraph([{value: `Word("Raises " ++ name ++ " : "), location: tag.location}]), location: tag.location}, ...contents])
+
+  | `Before(version, contents) =>
+    pp_info_box(pp_newline, `Note, pp_nestable_block_element(~resolveLink), formatter, [{value: `Paragraph([{value: `Word("Before " ++ version ++ " : "), location: tag.location}]), location: tag.location}, ...contents])
+
+  | `Return(contents) => 
+    pp_info_box(pp_newline, `Note, pp_nestable_block_element(~resolveLink), formatter, [{value: `Paragraph([{value: `Word("Returns: "), location: tag.location}]), location: tag.location},  ...contents])
+
+  | `See(_, link, contents) => 
+    pp_info_box(pp_newline, `Important, pp_nestable_block_element(~resolveLink), formatter, [{value: `Paragraph([{value: `Link(link, [{location: tag.location, value: `Word("See: ")}]), location: tag.location}]), location: tag.location},  ...contents])
+
+  | `Since(versionString) => 
+    pp_info_box(pp_newline, `Note, (_) => pp_inline_ele(~resolveLink), formatter, [{value: `Word("Since: " ++ versionString), location: tag.location}])
+
+  | `Version(versionString) => 
+    pp_info_box(pp_newline, `Note, (_) => pp_inline_ele(~resolveLink), formatter, [{value: `Word("Version: " ++ versionString), location: tag.location}])
+
+  | _ => ()
+}
+
+and pp_block_element = (~resolveLink, pp_newline, formatter, element: Loc.with_location(Ast.block_element)) => {
+  switch (element.value) {
+    | `Heading(level, _label, content) => pp_heading(~resolveLink, formatter, level, content)
+    | `Tag(tag) => pp_tag(~resolveLink, pp_newline, formatter, {...element, value: tag})
+    | #Ast.nestable_block_element as desc => pp_nestable_block_element(~resolveLink, pp_newline, formatter, {...element, value: desc})
+  }
+}
+
+and pp_block_elements = (~resolveLink, pp_newline, formatter, elements: list(Loc.with_location(Ast.block_element))) =>
+  Format.pp_print_list(~pp_sep=pp_block_delimit(pp_newline), pp_block_element(~resolveLink, pp_newline), formatter, elements)
+
+and pp_block_elements_in_list = (~resolveLink, pp_newline, formatter, elements: list(Loc.with_location(Ast.block_element))) =>
+  Format.pp_print_list(~pp_sep=pp_block_list_delimit(pp_newline), pp_block_element(~resolveLink, pp_newline), formatter, elements);
+
+let pp_warning = (~location, pp_newline, formatter, warning: Odoc_parser.Warning.t) => {
+  let uri = "file://" ++ location.Lexing.pos_fname ++ "#L" ++ string_of_int(warning.location.start.line) ++ "%2C" ++ string_of_int(warning.location.start.column);
+
+  Format.fprintf(formatter, "[Warning at %d:%d](<%s>): %s", warning.location.start.line, warning.location.start.column, uri, warning.message);
+}
+
+let pp_warning_box = (~location, pp_newline, formatter, warning) => pp_info_box(pp_newline, `Warning, pp_warning(~location), formatter, [warning]);
+
+let pp_warnings = (~location, pp_newline, formatter, warnings) => Format.pp_print_list(~pp_sep=pp_block_delimit(pp_newline), pp_warning_box(~location, pp_newline), formatter, warnings);
+
+let convert = (~location=?, ~resolveLink, text) => {
+  let prev_margin = Format.pp_get_margin(Format.str_formatter, ());
+  Format.pp_set_margin(Format.str_formatter, Int.max_int);
+
+  let location = location->Belt.Option.mapWithDefault(Lexing.dummy_pos, loc => loc.Compiler_libs_406.Location.loc_start);
   try {
-    let res = Parser_.parse_comment(
-      ~permissive=true,
-      ~sections_allowed=`All,
-      ~containing_definition=Paths.Identifier.Root({Root.package: "hi", file: Page("hi"), digest: "hi"}, "What"),
-      ~location=Lexing.dummy_pos,
+    let res = Odoc_parser.parse_comment(
+      ~location,
       ~text
     );
-    switch res.result {
-    | Error.Ok(docs) => List.map(convertItem, docs)
-    | Error(message) => [Omd.Text("failed to parse: " ++ Error.to_string(message))]
-    }
+    let items = res |> Odoc_parser.ast;
+    let warnings = res|> Odoc_parser.warnings;
+
+    Format.fprintf(Format.str_formatter, "%a%a%a------%a%a", pp_block_elements(~resolveLink, Format.pp_force_newline), items, Format.pp_force_newline, (), Format.pp_force_newline, (), Format.pp_force_newline, (), pp_warnings(~location, Format.pp_force_newline), warnings);
   } {
-    | exn => [Omd.Text("Error (invalid syntax?) while parsing ocamldoc: " ++ Printexc.to_string(exn))]
+    | exn => Format.fprintf(Format.str_formatter, "Error (invalid syntax?) while parsing ocamldoc: %s", Printexc.to_string(exn));
   }
+
+  let res = Format.flush_str_formatter();
+
+  Format.pp_set_margin(Format.str_formatter, prev_margin);
+  res;
 };
+

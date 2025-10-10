@@ -13,7 +13,7 @@
 (*                                                                        *)
 (**************************************************************************)
 
-type loc = Current.location = {
+type loc = {
   loc_start: Lexing.position;
   loc_end: Lexing.position;
   loc_ghost: bool;

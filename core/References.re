@@ -1,5 +1,6 @@
 
 open SharedTypes;
+open Compiler_libs_406;
 
 let debugReferences = ref(true);
 
@@ -24,9 +25,11 @@ let checkPos = ((line, char), {Location.loc_start: {pos_lnum, pos_bol, pos_cnum}
   );
 
 let locForPos = (~extra, pos) => {
-  extra.locations |> Utils.find(((loc, l)) => {
+  let loc = extra.locations |> Utils.find(((loc, l)) => {
     checkPos(pos, loc) ? Some((loc, l)) : None
   });
+
+  loc;
 };
 
 let posMatch = ({Lexing.pos_cnum}, {Lexing.pos_cnum: c2}) => {

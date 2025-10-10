@@ -16,7 +16,7 @@ let fileForCmt = (~moduleName, cmt, uri, processDoc) => {
 let fullForCmt = (~moduleName, ~allLocations, cmt, uri, processDoc) => {
   let%try infos = Shared.tryReadCmt(cmt);
   let%try file = ProcessCmt.forCmt(~moduleName, uri, processDoc, infos);
-  let%try_wrap extra = ProcessExtra.forCmt(~file, ~allLocations, infos);
+  let%try_wrap extra = ProcessExtra.forCmt(~file, ~allLocations, ~processDoc, infos);
   {file, extra}
 };
 
@@ -34,20 +34,18 @@ let fullForCmt = (~moduleName, ~allLocations, cmt, uri, processDoc) => {
   }
 }; */
 
-module Convert = Migrate_parsetree.Convert(Migrate_parsetree.OCaml_406, Migrate_parsetree.OCaml_current);
-
 let astForCmt = cmt => {
   let%try infos = Shared.tryReadCmt(cmt);
   switch (infos.cmt_annots) {
   | Implementation(structure) => {
     /* The definition of my Compiler_libs_406 is different from ocaml-migrate-parsetree's in
        a couple small ways that don't actually change the in-memory representation :eyeroll: */
-    Ok(`Implementation(Convert.copy_structure(Obj.magic(Untypeast.untype_structure(structure)))))
+    Ok(`Implementation(Obj.magic(Untypeast.untype_structure(structure))))
     /* Printast.implementation(Stdlib.Format.str_formatter, Untypeast.untype_structure(structure));
     Ok(Format.flush_str_formatter()); */
   }
   | Interface(signature) =>
-    Ok(`Interface(Convert.copy_signature(Obj.magic(Untypeast.untype_signature(signature)))))
+    Ok(`Interface(Obj.magic(Untypeast.untype_signature(signature))))
     /* Printast.interface(Stdlib.Format.str_formatter, Untypeast.untype_signature(signature));
     Ok(Format.flush_str_formatter()); */
 
@@ -67,11 +65,10 @@ let astForCmt = cmt => {
         )
       |> List.concat;
     Ok(
-      `Implementation(
-        Convert.copy_structure(Obj.magic(List.map(
+      `Implementation(Obj.magic(List.map(
           item => Untypeast.default_mapper.structure_item(Untypeast.default_mapper, item),
           items,
-        ))),
+        ))
       ),
     );
   | Partial_interface(parts) =>
@@ -91,10 +88,10 @@ let astForCmt = cmt => {
       |> List.concat;
     Ok(
       `Interface(
-        Convert.copy_signature(Obj.magic(List.map(
+        Obj.magic(List.map(
           item => Untypeast.default_mapper.signature_item(Untypeast.default_mapper, item),
           items,
-        ))),
+        )),
       ),
     );
   | _ => Error("Not a well-typed implementation")

@@ -1,3 +1,5 @@
+open Compiler_libs_406;
+
 /*
   steal from OCaml stdlib
   https://github.com/ocaml/ocaml/blob/7c9c210884e1b46f21af5bb4dfab995bb3336cf7/stdlib/string.ml#L205-L214
@@ -105,9 +107,12 @@ let locWithinLoc = (inner, outer) => {
   && inner.loc_end.pos_cnum <= outer.loc_end.pos_cnum
 };
 
-let toUri = (path) =>
+let toUri = (path) => {
+  let path = try (Unix.realpath(path)) {
+    | _exn => path
+  };
   if (Sys.os_type == "Unix") {
-    "file://" ++ path
+    "file://" ++ path;
   } else {
     "file://"
     ++ (
@@ -118,6 +123,7 @@ let toUri = (path) =>
       })
     )
   };
+}
 
 let parseWindowsUri = withoutScheme => {
   withoutScheme
@@ -136,7 +142,7 @@ let parseUri = (uri) => {
     let withoutScheme = sliceToEnd(withoutPct, String.length("file://"));
 
     if (Sys.os_type == "Unix") {
-      Some(withoutScheme)
+      Some(Unix.realpath(withoutScheme))
     } else {
       Some(parseWindowsUri(withoutScheme))
     }

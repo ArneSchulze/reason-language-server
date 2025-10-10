@@ -1,3 +1,4 @@
+open Compiler_libs_406;
 open Util.JsonShort;
 
 let pos = (~line, ~character) => o([("line", i(line)), ("character", i(character))]);

@@ -24,17 +24,22 @@ let execFull = (~input=?, ~pwd=?, ~env=Unix.environment(), cmd) => {
       Some(prevCwd)
     }
   }
-  let (cmd_out, cmd_in, cmd_err) = Unix.open_process_full(cmd, env);
-  switch prevCwd {
-    | None => ()
-    | Some(prevCwd) => Unix.chdir(prevCwd)
-  };
+
+  let ret = Unix.open_process_full(cmd, env);
+  let pid = Unix.process_full_pid(ret)
+  let (cmd_out, cmd_in, cmd_err) = ret;
 
   switch input {
   | None => ()
   | Some(text) => output_string(cmd_in, text)
   };
+
   close_out_noerr(cmd_in);
+
+  switch prevCwd {
+    | None => ()
+    | Some(prevCwd) => Unix.chdir(prevCwd)
+  };
 
   let cmd_out_descr = Unix.descr_of_in_channel(cmd_out);
   let cmd_err_descr = Unix.descr_of_in_channel(cmd_err);
@@ -62,7 +67,9 @@ let execFull = (~input=?, ~pwd=?, ~env=Unix.environment(), cmd) => {
   let (out, err) = loop(([], [], [cmd_out_descr, cmd_err_descr]));
   let out = List.rev(out);
   let err = List.rev(err);
-  switch(Unix.close_process_full((cmd_out, cmd_in, cmd_err))) {
+
+
+  switch(Unix.waitpid([WUNTRACED], pid) |> snd) {
     | WEXITED(0) => (out, err, true)
     | WEXITED(_)
     | WSIGNALED(_)

@@ -651,9 +651,9 @@ let rotateWithLeftChild k2 =
   (rightSet k1 (return k2 ));
   let hlk2, hrk2 = (treeHeight (left k2), (treeHeight (right k2))) in
   (heightSet k2
-     (Pervasives.max hlk2 hrk2 + 1));
+     (max hlk2 hrk2 + 1));
   let hlk1, hk2 = (treeHeight (left k1), (height k2)) in
-  (heightSet k1 (Pervasives.max hlk1 hk2 + 1));
+  (heightSet k1 (max hlk1 hk2 + 1));
   k1
 (* right rotation *)
 let rotateWithRightChild k1 =
@@ -661,9 +661,9 @@ let rotateWithRightChild k1 =
   (rightSet k1 (left k2));
   (leftSet k2 (return k1));
   let hlk1, hrk1 = ((treeHeight (left k1)), (treeHeight (right k1))) in
-  (heightSet k1 (Pervasives.max  hlk1 hrk1 + 1));
+  (heightSet k1 (max  hlk1 hrk1 + 1));
   let hrk2, hk1 = (treeHeight (right k2), (height k1)) in
-  (heightSet k2 (Pervasives.max  hrk2 hk1 + 1));
+  (heightSet k2 (max  hrk2 hk1 + 1));
   k2
 
 (*
@@ -681,7 +681,7 @@ let doubleWithRightChild k2 =
 
 let heightUpdateMutate t =
   let hlt, hrt = (treeHeight (left t),(treeHeight (right t))) in
-  heightSet t (Pervasives.max hlt hrt  + 1);
+  heightSet t (max hlt hrt  + 1);
   t
 
 let balMutate nt  =

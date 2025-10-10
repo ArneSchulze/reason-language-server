@@ -46,13 +46,40 @@ let showModule = (~markdown, ~file: SharedTypes.file, ~name, declared: option(Sh
   }
 };
 
+let showOnlyDoc = (~file, ~getModule, ~showPath, ~rootUri, loc) => {
+  let%opt ({docstring}, {uri}, res) = References.definedForLoc(
+    ~file,
+    ~getModule,
+    loc,
+  );
+
+  let%opt docstring = docstring;
+
+  let uri = Utils.startsWith(uri, rootUri)
+    ? "<root>" ++ Utils.sliceToEnd(uri, String.length(rootUri))
+    : uri;
+
+  let parts = [docstring];
+
+  let parts = showPath ? parts @ [uri] : parts;
+
+  Some(String.concat("\n\n", parts))
+}
+
 open Infix;
 let newHover = (~rootUri, ~file: SharedTypes.file, ~getModule, ~markdown, ~showPath, loc) => {
   switch (loc) {
     | SharedTypes.Loc.Explanation(text) => Some(text)
     /* TODO store a "defined" for Open (the module) */
     | Open => Some("an open")
-    | TypeDefinition(_name, _tdecl, _stamp) => None
+    | TypeDefinition(_name, _tdecl, _stamp) => 
+      showOnlyDoc(
+        ~file,
+        ~getModule,
+        ~showPath,
+        ~rootUri,
+        loc,
+      );
     | Module(LocalReference(stamp, _tip)) => {
       let%opt md = Query.hashFind(file.stamps.modules, stamp);
       let%opt (file, declared) = References.resolveModuleReference(~file, ~getModule, md);
@@ -75,12 +102,26 @@ let newHover = (~rootUri, ~file: SharedTypes.file, ~getModule, ~markdown, ~showP
       };
       showModule(~name, ~markdown, ~file, declared)
     }
-    | Module(_) => None
+    | Module(_) => 
+      showOnlyDoc(
+        ~file,
+        ~getModule,
+        ~showPath,
+        ~rootUri,
+        loc,
+      );
     | TopLevelModule(name) => {
       let%opt file = getModule(name);
       showModule(~name=file.moduleName, ~markdown, ~file, None)
     }
-    | Typed(_, Definition(_, Attribute(_) | Constructor(_))) => None
+    | Typed(_, Definition(_, Attribute(_) | Constructor(_))) => 
+      showOnlyDoc(
+        ~file,
+        ~getModule,
+        ~showPath,
+        ~rootUri,
+        loc,
+      );
     | Constant(t) => {
       Some(switch t {
       | Const_int(_) => "int"

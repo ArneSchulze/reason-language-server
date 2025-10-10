@@ -1,18 +1,11 @@
 
-#if 408
-open Compiler_libs_408;
-#elif 407
-open Compiler_libs_407;
-#elif 406
 open Compiler_libs_406;
-#elif 402
-open Compiler_libs_402;
-#endif
 open Belt.Result;
 
 let tryReadCmi = cmi =>
-  switch (Cmi_format.read_cmi(cmi)) {
-  | exception err => Error("Invalid cmi format " ++ cmi ++ " - probably wrong ocaml version, expected " ++ Config.version ++ " : " ++ Printexc.to_string(err))
+  switch (Compiler_libs_406.Cmi_format.read_cmi(cmi)) {
+  | exception err => 
+    Error("Invalid cmi format " ++ cmi ++ " - probably wrong ocaml version, expected " ++ Compiler_libs_406.Config.version ++ " : " ++ Printexc.to_string(err))
   | x => Ok(x)
   };
 
@@ -20,8 +13,8 @@ let tryReadCmt = cmt => {
   if (!Util.Files.exists(cmt)) {
     Error("Cmt file does not exist " ++ cmt)
   } else {
-    switch (Cmt_format.read_cmt(cmt)) {
-    | exception Cmi_format.Error(err) =>
+    switch (Compiler_libs_406.Cmt_format.read_cmt(cmt)) {
+    | exception Compiler_libs_406.Cmi_format.Error(err) =>
       Error("Failed to load " ++ cmt ++ " as a cmt w/ ocaml version " ++
 #if 408
       "408" ++
@@ -36,7 +29,7 @@ let tryReadCmt = cmt => {
         Cmi_format.report_error(Format.str_formatter, err);
         Format.flush_str_formatter();
       })
-    | exception err => Error("Invalid cmt format " ++ cmt ++ " - probably wrong ocaml version, expected " ++ Config.version ++ " : " ++ Printexc.to_string(err))
+    | exception err => Error("Invalid cmt format " ++ cmt ++ " - probably wrong ocaml version, expected " ++ Compiler_libs_406.Config.version ++ " : " ++ Printexc.to_string(err))
     | x => Ok(x)
     };
   }

@@ -18,6 +18,8 @@ open Format;;
 
 val interface : formatter -> signature -> unit;;
 val implementation : formatter -> structure -> unit;;
+val structure_item: formatter -> structure_item -> unit;;
+val signature_item: formatter -> signature_item -> unit;;
 
 val implementation_with_coercion :
     formatter -> (structure * module_coercion) -> unit;;

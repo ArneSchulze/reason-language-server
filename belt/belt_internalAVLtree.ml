@@ -300,7 +300,7 @@ let rec checkInvariantInternal (v : _ t) =
   | Some n ->
       let (l,r) = ((left n), (right n)) in
       let diff = (treeHeight l) - (treeHeight r) in
-      (if Pervasives.not ((diff <= 2) && (diff >= (-2)))
+      (if not ((diff <= 2) && (diff >= (-2)))
        then Js.Exn.raiseError "File \"\", line 374, characters 6-12";
        checkInvariantInternal l;
        checkInvariantInternal r)
@@ -526,17 +526,17 @@ let rotateWithLeftChild k2 =
   leftSet k2 (right k1);
   rightSet k1 (return k2);
   (let (hlk2,hrk2) = ((treeHeight (left k2)), (treeHeight (right k2))) in
-   heightSet k2 ((Pervasives.max hlk2 hrk2) + 1);
+   heightSet k2 ((max hlk2 hrk2) + 1);
    (let (hlk1,hk2) = ((treeHeight (left k1)), (height k2)) in
-    heightSet k1 ((Pervasives.max hlk1 hk2) + 1); k1))
+    heightSet k1 ((max hlk1 hk2) + 1); k1))
 let rotateWithRightChild k1 =
   let k2 = unsafeCoerce (right k1) in
   rightSet k1 (left k2);
   leftSet k2 (return k1);
   (let (hlk1,hrk1) = ((treeHeight (left k1)), (treeHeight (right k1))) in
-   heightSet k1 ((Pervasives.max hlk1 hrk1) + 1);
+   heightSet k1 ((max hlk1 hrk1) + 1);
    (let (hrk2,hk1) = ((treeHeight (right k2)), (height k1)) in
-    heightSet k2 ((Pervasives.max hrk2 hk1) + 1); k2))
+    heightSet k2 ((max hrk2 hk1) + 1); k2))
 let doubleWithLeftChild k3 =
   let v = rotateWithRightChild (unsafeCoerce (left k3)) in
   leftSet k3 (return v); rotateWithLeftChild k3
@@ -545,7 +545,7 @@ let doubleWithRightChild k2 =
   rightSet k2 (return v); rotateWithRightChild k2
 let heightUpdateMutate t =
   let (hlt,hrt) = ((treeHeight (left t)), (treeHeight (right t))) in
-  heightSet t ((Pervasives.max hlt hrt) + 1); t
+  heightSet t ((max hlt hrt) + 1); t
 let balMutate nt =
   let (l,r) = ((left nt), (right nt)) in
   let (hl,hr) = ((treeHeight l), (treeHeight r)) in

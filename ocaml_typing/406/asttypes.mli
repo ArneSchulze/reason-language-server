@@ -15,7 +15,7 @@
 
 (** Auxiliary AST types used by parsetree and typedtree. *)
 
-type constant = Current.constant =
+type constant =
     Const_int of int
   | Const_char of char
   | Const_string of string * string option

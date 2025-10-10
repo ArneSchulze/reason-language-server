@@ -8,10 +8,10 @@ let rec findDocAttribute = (attributes) => {
   open Parsetree;
   switch attributes {
   | [] => None
-  | [({Asttypes.txt: "ocaml.doc"}, PStr([{pstr_desc: Pstr_eval({pexp_desc: Pexp_constant(
+  | [({Asttypes.txt: "ocaml.doc", loc}, PStr([{pstr_desc: Pstr_eval({pexp_desc: Pexp_constant(
     Pconst_string
     (doc, _))}, _)}])), ..._] =>
-    Some(PrepareUtils.cleanOffStars(doc))
+    Some((PrepareUtils.cleanOffStars(doc), loc))
   | [_, ...rest] => findDocAttribute(rest)
   }
 };
@@ -30,6 +30,7 @@ let rec findDeprecatedAttribute = (attributes) => {
 };
 
 let newDeclared = (~contents, ~scope, ~extent, ~name, ~stamp, ~modulePath, ~processDoc, exported, attributes) => {
+  let docAttr = findDocAttribute(attributes);
   {
     name,
     stamp,
@@ -38,7 +39,10 @@ let newDeclared = (~contents, ~scope, ~extent, ~name, ~stamp, ~modulePath, ~proc
     deprecated: findDeprecatedAttribute(attributes),
     exported,
     modulePath,
-    docstring: findDocAttribute(attributes) |?>> processDoc,
+    docstring: switch (docAttr) {
+      | None => None
+      | Some((doc, loc)) => Some(processDoc(~location=loc, doc))
+    },
     contents,
     /* scopeType: Let, */
     /* scopeStart: env.scopeStart, */
